@@ -1,10 +1,9 @@
 #include <Arduino.h>
 #include <Adafruit_NeoPixel.h>
-// This lib is fine for now but there are better ones
-#include <Button.h>
+#include <Button2.h>
 #include <config.h>
 
-Button mainButton(MAIN_BUTTON_PIN);
+Button2 mainButton;
 Adafruit_NeoPixel pixels(NUM_PIXELS, NEOPIXEL_PIN, NEO_GRBW + NEO_KHZ800);
 
 // Global variables
@@ -13,28 +12,34 @@ enum pomodoroMode
     INACTIVE,
     WORK,
     REST,
-    BREAK
+    BREAK,
+    SLEEP,
+    PAUSE
 };
 u_long pomodoroStartMs;
 int pomodoroMode = INACTIVE;
 int pomodoroCycle = 0;
 int lastPixel = NUM_PIXELS;
-u_long lastButtonPress;
 
 // Function definitions
 void initializePixels();
 void updatePomodoroCycle(u_long ms);
 void updateLedRing(u_long ms);
-void handleButtonPress(u_long ms);
+void handleButtonPress(Button2 &btn);
 void updateAnimation(u_long ms);
 void chase(int colors[4]);
 void clock(int colors[4], long elapsedMs, int totalMins);
 
 void setup()
 {
-    mainButton.begin();
-    pixels.begin();
+    mainButton.setLongClickTime(1000);
+    mainButton.begin(MAIN_BUTTON_PIN);
+    mainButton.setClickHandler(handleButtonPress);
+    mainButton.setLongClickDetectedHandler(handleButtonPress);
+    mainButton.setDoubleClickHandler(handleButtonPress);
+    mainButton.setTripleClickHandler(handleButtonPress);
 
+    pixels.begin();
     Serial.begin(115200);
 
     delay(100);
@@ -42,27 +47,18 @@ void setup()
     initializePixels();
 }
 
+u_long currentMs;
 u_long lastLoop = 0;
 
 void loop()
 {
-    u_long currentMs = millis();
+    currentMs = millis();
 
-    if (mainButton.pressed())
-    {
-        lastButtonPress = currentMs;
-    }
-
-    if (mainButton.released())
-    {
-        Serial.println("Button released");
-        handleButtonPress(currentMs);
-        lastButtonPress = -1;
-    }
+    mainButton.loop();
 
     if (currentMs - lastLoop > 10)
     {
-        if (pomodoroMode != INACTIVE)
+        if (pomodoroMode != INACTIVE && pomodoroMode != SLEEP && pomodoroMode != PAUSE)
         {
             updatePomodoroCycle(currentMs);
             updateLedRing(currentMs);
@@ -76,17 +72,50 @@ void loop()
     }
 }
 
-void handleButtonPress(u_long ms)
+int pauseResumeMode;
+u_long pauseElapsedMs;
+
+void handleButtonPress(Button2 &btn)
 {
-    if (pomodoroMode == INACTIVE)
+    switch (btn.getType())
     {
-        pomodoroMode = WORK;
-        pomodoroStartMs = ms;
-    }
-    else
-    {
-        // This will force `updatePomodoroCycle` to the next cycle
-        pomodoroStartMs = -999999999;
+    case single_click:
+        if (pomodoroMode == INACTIVE)
+        {
+            pomodoroMode = WORK;
+            pomodoroStartMs = currentMs;
+        }
+        else if (pomodoroMode == PAUSE)
+        {
+            pomodoroMode = pauseResumeMode;
+            pomodoroStartMs = currentMs - pauseElapsedMs;
+        }
+        else
+        {
+            // This will force `updatePomodoroCycle` to the next cycle
+            pomodoroStartMs = -999999999;
+        }
+        break;
+    case double_click:
+        pauseResumeMode = pomodoroMode;
+        pauseElapsedMs = currentMs - pomodoroStartMs;
+        pomodoroMode = PAUSE;
+        pixels.clear();
+        break;
+    case triple_click:
+        Serial.print("triple ");
+        break;
+    case long_click:
+        pomodoroMode = pomodoroMode == SLEEP ? INACTIVE : SLEEP;
+
+        if (pomodoroMode == SLEEP)
+        {
+            pixels.clear();
+            pixels.show();
+        }
+        break;
+    case empty:
+        return;
     }
 }
 
@@ -118,20 +147,22 @@ void updateLedRing(u_long ms)
     u_long elapsedMs = ms - pomodoroStartMs;
     long factor;
 
-    if (pomodoroMode == WORK)
+    switch (pomodoroMode)
     {
+    case WORK:
         factor = POMODORO_WORK_MINS * 60000 / NUM_PIXELS;
         lastPixel = floor(elapsedMs / factor);
-    }
-    else if (pomodoroMode == REST)
-    {
+        break;
+    case REST:
         factor = POMODORO_REST_MINS * 60000 / NUM_PIXELS;
         lastPixel = floor(elapsedMs / factor);
-    }
-    else if (pomodoroMode == BREAK)
-    {
+        break;
+    case BREAK:
         factor = POMODORO_BREAK_MINS * 60000 / NUM_PIXELS;
         lastPixel = floor(elapsedMs / factor);
+        break;
+    default:
+        break;
     }
 
     lastPixel = lastPixel == 0 ? 1 : lastPixel;
@@ -150,30 +181,47 @@ void initializePixels()
 void updateAnimation(u_long ms)
 {
     long elapsedMs = (ms - pomodoroStartMs);
+    int colors[4];
 
-    if (pomodoroMode == INACTIVE)
+    switch (pomodoroMode)
     {
-        int colors[4] = {0, 0, 0, 100};
-
+    case INACTIVE:
+        colors[0] = 0;
+        colors[1] = 0;
+        colors[2] = 0;
+        colors[3] = 100;
         chase(colors);
-    }
-    else if (pomodoroMode == WORK)
-    {
-        int colors[4] = {100, 0, 20, 0};
-
+        break;
+    case WORK:
+        colors[0] = 100;
+        colors[1] = 0;
+        colors[2] = 20;
+        colors[3] = 0;
         clock(colors, elapsedMs, POMODORO_WORK_MINS);
-    }
-    else if (pomodoroMode == REST)
-    {
-        int colors[4] = {0, 20, 100, 0};
-
+        break;
+    case REST:
+        colors[0] = 0;
+        colors[1] = 20;
+        colors[2] = 100;
+        colors[3] = 0;
         clock(colors, elapsedMs, POMODORO_REST_MINS);
-    }
-    else if (pomodoroMode == BREAK)
-    {
-        int colors[4] = {0, 100, 20, 0};
-
+        break;
+    case BREAK:
+        colors[0] = 0;
+        colors[1] = 100;
+        colors[2] = 20;
+        colors[3] = 0;
         clock(colors, elapsedMs, POMODORO_BREAK_MINS);
+        break;
+    case PAUSE:
+        colors[0] = 20;
+        colors[1] = 20;
+        colors[2] = 0;
+        colors[3] = 0;
+        chase(colors);
+        break;
+    default:
+        break;
     }
 }
 
