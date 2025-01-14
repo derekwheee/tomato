@@ -16,19 +16,18 @@ enum pomodoroMode
     SLEEP,
     PAUSE
 };
-u_long pomodoroStartMs;
+long pomodoroStartMs;
 int pomodoroMode = INACTIVE;
 int pomodoroCycle = 0;
-int lastPixel = NUM_PIXELS;
 
 // Function definitions
 void initializePixels();
-void updatePomodoroCycle(u_long ms);
-void updateLedRing(u_long ms);
+void advancePomodoroMode(u_long ms);
 void handleButtonPress(Button2 &btn);
 void updateAnimation(u_long ms);
 void chase(int colors[4]);
-void clock(int colors[4], long elapsedMs, int totalMins);
+void clock(int colors[4], long elapsedMs, float totalMins);
+void breath(int colors[4]);
 
 void setup()
 {
@@ -58,12 +57,6 @@ void loop()
 
     if (currentMs - lastLoop > 10)
     {
-        if (pomodoroMode != INACTIVE && pomodoroMode != SLEEP && pomodoroMode != PAUSE)
-        {
-            updatePomodoroCycle(currentMs);
-            updateLedRing(currentMs);
-        }
-
         updateAnimation(currentMs);
 
         pixels.show();
@@ -80,21 +73,7 @@ void handleButtonPress(Button2 &btn)
     switch (btn.getType())
     {
     case single_click:
-        if (pomodoroMode == INACTIVE)
-        {
-            pomodoroMode = WORK;
-            pomodoroStartMs = currentMs;
-        }
-        else if (pomodoroMode == PAUSE)
-        {
-            pomodoroMode = pauseResumeMode;
-            pomodoroStartMs = currentMs - pauseElapsedMs;
-        }
-        else
-        {
-            // This will force `updatePomodoroCycle` to the next cycle
-            pomodoroStartMs = -999999999;
-        }
+        advancePomodoroMode(currentMs);
         break;
     case double_click:
         pauseResumeMode = pomodoroMode;
@@ -107,6 +86,7 @@ void handleButtonPress(Button2 &btn)
         break;
     case long_click:
         pomodoroMode = pomodoroMode == SLEEP ? INACTIVE : SLEEP;
+        pomodoroCycle = 1;
 
         if (pomodoroMode == SLEEP)
         {
@@ -119,53 +99,36 @@ void handleButtonPress(Button2 &btn)
     }
 }
 
-void updatePomodoroCycle(u_long ms)
+void advancePomodoroMode(u_long ms)
 {
-    u_long elapsedMs = ms - pomodoroStartMs;
+    int currentMode = pomodoroMode;
 
-    if (pomodoroMode == WORK && elapsedMs > POMODORO_WORK_MINS * 60000)
+    switch (currentMode)
     {
+    case PAUSE:
+        pomodoroMode = pauseResumeMode;
+        pomodoroStartMs = currentMs - pauseElapsedMs;
+        break;
+    case INACTIVE:
+        pomodoroMode = WORK;
+        pomodoroStartMs = ms;
+        break;
+    case WORK:
         pomodoroMode = pomodoroCycle >= POMODORO_CYCLES ? BREAK : REST;
         pomodoroStartMs = ms;
-    }
-    else if (pomodoroMode == REST && elapsedMs > POMODORO_REST_MINS * 60000)
-    {
+        break;
+    case REST:
         pomodoroMode = WORK;
         pomodoroStartMs = ms;
         ++pomodoroCycle;
-    }
-    else if (pomodoroMode == BREAK && elapsedMs > POMODORO_BREAK_MINS * 60000)
-    {
+        break;
+    case BREAK:
         pomodoroMode = WORK;
         pomodoroStartMs = ms;
         pomodoroCycle = 1;
-    }
-}
-
-void updateLedRing(u_long ms)
-{
-    u_long elapsedMs = ms - pomodoroStartMs;
-    long factor;
-
-    switch (pomodoroMode)
-    {
-    case WORK:
-        factor = POMODORO_WORK_MINS * 60000 / NUM_PIXELS;
-        lastPixel = floor(elapsedMs / factor);
-        break;
-    case REST:
-        factor = POMODORO_REST_MINS * 60000 / NUM_PIXELS;
-        lastPixel = floor(elapsedMs / factor);
-        break;
-    case BREAK:
-        factor = POMODORO_BREAK_MINS * 60000 / NUM_PIXELS;
-        lastPixel = floor(elapsedMs / factor);
-        break;
     default:
         break;
     }
-
-    lastPixel = lastPixel == 0 ? 1 : lastPixel;
 }
 
 void initializePixels()
@@ -181,6 +144,8 @@ void initializePixels()
 void updateAnimation(u_long ms)
 {
     long elapsedMs = (ms - pomodoroStartMs);
+    bool hasExceededTime = false;
+
     int colors[4];
 
     switch (pomodoroMode)
@@ -197,21 +162,45 @@ void updateAnimation(u_long ms)
         colors[1] = 0;
         colors[2] = 20;
         colors[3] = 0;
-        clock(colors, elapsedMs, POMODORO_WORK_MINS);
+        hasExceededTime = elapsedMs > POMODORO_WORK_MINS * 60000;
+        if (hasExceededTime)
+        {
+            breath(colors);
+        }
+        else
+        {
+            clock(colors, elapsedMs, POMODORO_WORK_MINS);
+        }
         break;
     case REST:
         colors[0] = 0;
         colors[1] = 20;
         colors[2] = 100;
         colors[3] = 0;
-        clock(colors, elapsedMs, POMODORO_REST_MINS);
+        hasExceededTime = elapsedMs > POMODORO_REST_MINS * 60000;
+        if (hasExceededTime)
+        {
+            breath(colors);
+        }
+        else
+        {
+            clock(colors, elapsedMs, POMODORO_REST_MINS);
+        }
         break;
     case BREAK:
         colors[0] = 0;
         colors[1] = 100;
         colors[2] = 20;
         colors[3] = 0;
-        clock(colors, elapsedMs, POMODORO_BREAK_MINS);
+        hasExceededTime = elapsedMs > POMODORO_BREAK_MINS * 60000;
+        if (hasExceededTime)
+        {
+            breath(colors);
+        }
+        else
+        {
+            clock(colors, elapsedMs, POMODORO_BREAK_MINS);
+        }
         break;
     case PAUSE:
         colors[0] = 20;
@@ -266,7 +255,7 @@ long clockLastMoveMs = -1;
 long clockPulseStep = 0;
 float clockPulseSteps = CLOCK_PULSE_MS / CLOCK_DELAY_MS;
 
-void clock(int colors[4], long elapsedMs, int totalMins)
+void clock(int colors[4], long elapsedMs, float totalMins)
 {
     long clockMs = millis();
     float timePerPixelMs = (1.0f * totalMins / NUM_PIXELS) * 60000.0;
@@ -300,5 +289,33 @@ void clock(int colors[4], long elapsedMs, int totalMins)
         // Prepare next step
         clockPulseStep = clockPulseStep + CLOCK_DELAY_MS > CLOCK_PULSE_MS ? 0 : clockPulseStep + CLOCK_DELAY_MS;
         clockLastMoveMs = clockMs;
+    }
+}
+
+long breathLastMoveMs = -1;
+long breathPulseStep = 0;
+float breathPulseSteps = CLOCK_PULSE_MS / CLOCK_DELAY_MS;
+
+void breath(int colors[4])
+{
+    long clockMs = currentMs;
+
+    if (clockMs - breathLastMoveMs > CLOCK_DELAY_MS)
+    {
+        pixels.clear();
+        float pulseScale = abs(breathPulseStep - (CLOCK_PULSE_MS / 2.0)) / (CLOCK_PULSE_MS / 2.0);
+        float pulsedR = colors[0] * pulseScale;
+        float pulsedG = colors[1] * pulseScale;
+        float pulsedB = colors[2] * pulseScale;
+        float pulsedW = colors[3] * pulseScale;
+
+        for (int i = 0; i < NUM_PIXELS; ++i)
+        {
+            pixels.setPixelColor(i, pixels.Color(pulsedR, pulsedG, pulsedB, pulsedW));
+        }
+
+        // Prepare next step
+        breathPulseStep = breathPulseStep + CLOCK_DELAY_MS > CLOCK_PULSE_MS ? 0 : breathPulseStep + CLOCK_DELAY_MS;
+        breathLastMoveMs = clockMs;
     }
 }
