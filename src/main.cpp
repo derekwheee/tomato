@@ -20,6 +20,10 @@ long pomodoroStartMs;
 int pomodoroMode = INACTIVE;
 int pomodoroCycle = 0;
 
+u_long vibrationLastPulseMs;
+int vibrationPinState = LOW;
+bool isVibrationPulsing = false;
+
 // Function definitions
 void initializePixels();
 void advancePomodoroMode(u_long ms);
@@ -28,6 +32,9 @@ void updateAnimation(u_long ms);
 void chase(int colors[4]);
 void clock(int colors[4], long elapsedMs, float totalMins);
 void breath(int colors[4]);
+void startVibrationPulse();
+void loopVibrationPulse();
+void stopVibrationPulse();
 
 void setup()
 {
@@ -37,6 +44,8 @@ void setup()
     mainButton.setLongClickDetectedHandler(handleButtonPress);
     mainButton.setDoubleClickHandler(handleButtonPress);
     mainButton.setTripleClickHandler(handleButtonPress);
+
+    pinMode(VIBRATION_PIN, OUTPUT);
 
     pixels.begin();
     Serial.begin(115200);
@@ -58,6 +67,7 @@ void loop()
     if (currentMs - lastLoop > 10)
     {
         updateAnimation(currentMs);
+        loopVibrationPulse();
 
         pixels.show();
 
@@ -76,15 +86,17 @@ void handleButtonPress(Button2 &btn)
         advancePomodoroMode(currentMs);
         break;
     case double_click:
+        stopVibrationPulse();
         pauseResumeMode = pomodoroMode;
         pauseElapsedMs = currentMs - pomodoroStartMs;
         pomodoroMode = PAUSE;
         pixels.clear();
         break;
     case triple_click:
-        Serial.print("triple ");
+        // TODO: Use this to switch timer modes
         break;
     case long_click:
+        stopVibrationPulse();
         pomodoroMode = pomodoroMode == SLEEP ? INACTIVE : SLEEP;
         pomodoroCycle = 1;
 
@@ -102,6 +114,8 @@ void handleButtonPress(Button2 &btn)
 void advancePomodoroMode(u_long ms)
 {
     int currentMode = pomodoroMode;
+
+    stopVibrationPulse();
 
     switch (currentMode)
     {
@@ -165,6 +179,10 @@ void updateAnimation(u_long ms)
         hasExceededTime = elapsedMs > POMODORO_WORK_MINS * 60000;
         if (hasExceededTime)
         {
+            if (!isVibrationPulsing)
+            {
+                startVibrationPulse();
+            }
             breath(colors);
         }
         else
@@ -180,6 +198,10 @@ void updateAnimation(u_long ms)
         hasExceededTime = elapsedMs > POMODORO_REST_MINS * 60000;
         if (hasExceededTime)
         {
+            if (!isVibrationPulsing)
+            {
+                startVibrationPulse();
+            }
             breath(colors);
         }
         else
@@ -195,6 +217,10 @@ void updateAnimation(u_long ms)
         hasExceededTime = elapsedMs > POMODORO_BREAK_MINS * 60000;
         if (hasExceededTime)
         {
+            if (!isVibrationPulsing)
+            {
+                startVibrationPulse();
+            }
             breath(colors);
         }
         else
@@ -318,4 +344,28 @@ void breath(int colors[4])
         breathPulseStep = breathPulseStep + CLOCK_DELAY_MS > CLOCK_PULSE_MS ? 0 : breathPulseStep + CLOCK_DELAY_MS;
         breathLastMoveMs = clockMs;
     }
+}
+
+void startVibrationPulse()
+{
+    vibrationLastPulseMs = currentMs;
+    isVibrationPulsing = true;
+    vibrationPinState = HIGH;
+}
+
+void loopVibrationPulse()
+{
+    digitalWrite(VIBRATION_PIN, vibrationPinState);
+
+    if (isVibrationPulsing && currentMs - vibrationLastPulseMs >= VIBRATION_PULSE_MS)
+    {
+        vibrationPinState = vibrationPinState == HIGH ? LOW : HIGH;
+        vibrationLastPulseMs = currentMs;
+    }
+}
+
+void stopVibrationPulse()
+{
+    isVibrationPulsing = false;
+    vibrationPinState = LOW;
 }
