@@ -93,7 +93,7 @@ void handleButtonPress(Button2 &btn)
         pixels.clear();
         break;
     case triple_click:
-        // TODO: Use this to switch timer modes
+        // TODO: Use this to show battery life?
         break;
     case long_click:
         stopVibrationPulse();
