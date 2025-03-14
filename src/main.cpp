@@ -1,10 +1,14 @@
 #include <Arduino.h>
 #include <Adafruit_NeoPixel.h>
+#include <Adafruit_DotStar.h>
 #include <Button2.h>
+#include <SPI.h>
+#include <Wire.h>
 #include <config.h>
 
 Button2 mainButton;
-Adafruit_NeoPixel pixels(NUM_PIXELS, NEOPIXEL_PIN, NEO_GRBW + NEO_KHZ800);
+Adafruit_NeoPixel pixels(NUM_PIXELS, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
+Adafruit_DotStar dot(1, DOTSTAR_DATA_PIN, DOTSTAR_CLOCK_PIN, DOTSTAR_BRG);
 
 // Global variables
 enum pomodoroMode
@@ -29,9 +33,9 @@ void initializePixels();
 void advancePomodoroMode(u_long ms);
 void handleButtonPress(Button2 &btn);
 void updateAnimation(u_long ms);
-void chase(int colors[4]);
-void clock(int colors[4], long elapsedMs, float totalMins);
-void breath(int colors[4]);
+void chase(int colors[3]);
+void clock(int colors[3], long elapsedMs, float totalMins);
+void breath(int colors[3]);
 void startVibrationPulse();
 void loopVibrationPulse();
 void stopVibrationPulse();
@@ -39,7 +43,7 @@ void stopVibrationPulse();
 void setup()
 {
     mainButton.setLongClickTime(1000);
-    mainButton.begin(MAIN_BUTTON_PIN);
+    mainButton.begin(MAIN_BUTTON_PIN, INPUT_PULLDOWN, false);
     mainButton.setClickHandler(handleButtonPress);
     mainButton.setLongClickDetectedHandler(handleButtonPress);
     mainButton.setDoubleClickHandler(handleButtonPress);
@@ -53,6 +57,10 @@ void setup()
     delay(100);
 
     initializePixels();
+
+    dot.begin();
+    dot.setPixelColor(0, 0, 0, 5);
+    dot.show();
 }
 
 u_long currentMs;
@@ -69,6 +77,7 @@ void loop()
         updateAnimation(currentMs);
         loopVibrationPulse();
 
+        pixels.setBrightness(64);
         pixels.show();
 
         lastLoop = currentMs;
@@ -86,11 +95,18 @@ void handleButtonPress(Button2 &btn)
         advancePomodoroMode(currentMs);
         break;
     case double_click:
-        stopVibrationPulse();
-        pauseResumeMode = pomodoroMode;
-        pauseElapsedMs = currentMs - pomodoroStartMs;
-        pomodoroMode = PAUSE;
-        pixels.clear();
+        if (pomodoroMode != PAUSE)
+        {
+            stopVibrationPulse();
+            pauseResumeMode = pomodoroMode;
+            pauseElapsedMs = currentMs - pomodoroStartMs;
+            pomodoroMode = PAUSE;
+            pixels.clear();
+        }
+        else
+        {
+            advancePomodoroMode(currentMs);
+        }
         break;
     case triple_click:
         // TODO: Use this to show battery life?
@@ -102,8 +118,15 @@ void handleButtonPress(Button2 &btn)
 
         if (pomodoroMode == SLEEP)
         {
+            dot.setPixelColor(0, 0, 0, 0);
+            dot.show();
             pixels.clear();
             pixels.show();
+        }
+        else
+        {
+            dot.setPixelColor(0, 0, 0, 5);
+            dot.show();
         }
         break;
     case empty:
@@ -128,7 +151,7 @@ void advancePomodoroMode(u_long ms)
         pomodoroStartMs = ms;
         break;
     case WORK:
-        pomodoroMode = pomodoroCycle >= POMODORO_CYCLES ? BREAK : REST;
+        pomodoroMode = pomodoroCycle >= POMODORO_CYCLES - 1 ? BREAK : REST;
         pomodoroStartMs = ms;
         break;
     case REST:
@@ -155,27 +178,25 @@ void initializePixels()
     pixels.show();
 }
 
+int colors[3];
+
 void updateAnimation(u_long ms)
 {
     long elapsedMs = (ms - pomodoroStartMs);
     bool hasExceededTime = false;
 
-    int colors[4];
-
     switch (pomodoroMode)
     {
     case INACTIVE:
-        colors[0] = 0;
-        colors[1] = 0;
-        colors[2] = 0;
-        colors[3] = 100;
-        chase(colors);
+        colors[0] = 255;
+        colors[1] = 202;
+        colors[2] = 58;
+        breath(colors);
         break;
     case WORK:
-        colors[0] = 100;
-        colors[1] = 0;
-        colors[2] = 20;
-        colors[3] = 0;
+        colors[0] = 255;
+        colors[1] = 89;
+        colors[2] = 94;
         hasExceededTime = elapsedMs > POMODORO_WORK_MINS * 60000;
         if (hasExceededTime)
         {
@@ -191,10 +212,9 @@ void updateAnimation(u_long ms)
         }
         break;
     case REST:
-        colors[0] = 0;
-        colors[1] = 20;
-        colors[2] = 100;
-        colors[3] = 0;
+        colors[0] = 25;
+        colors[1] = 130;
+        colors[2] = 196;
         hasExceededTime = elapsedMs > POMODORO_REST_MINS * 60000;
         if (hasExceededTime)
         {
@@ -210,10 +230,9 @@ void updateAnimation(u_long ms)
         }
         break;
     case BREAK:
-        colors[0] = 0;
-        colors[1] = 100;
-        colors[2] = 20;
-        colors[3] = 0;
+        colors[0] = 138;
+        colors[1] = 201;
+        colors[2] = 38;
         hasExceededTime = elapsedMs > POMODORO_BREAK_MINS * 60000;
         if (hasExceededTime)
         {
@@ -229,10 +248,6 @@ void updateAnimation(u_long ms)
         }
         break;
     case PAUSE:
-        colors[0] = 20;
-        colors[1] = 20;
-        colors[2] = 0;
-        colors[3] = 0;
         chase(colors);
         break;
     default:
@@ -243,7 +258,7 @@ void updateAnimation(u_long ms)
 long lastMoveMs = -1;
 int nextPosition = 0;
 
-void chase(int colors[4])
+void chase(int colors[3])
 {
     u_long currentMs = millis();
 
@@ -254,7 +269,7 @@ void chase(int colors[4])
         pixels.setPixelColor(tailEndIndex, 0);
 
         // Set the current head pixel
-        pixels.setPixelColor(nextPosition, pixels.Color(colors[0], colors[1], colors[2], colors[3]));
+        pixels.setPixelColor(nextPosition, pixels.Color(colors[0], colors[1], colors[2]));
 
         // Update the tail pixels
         for (int i = 1; i < CHASE_TAIL_LENGTH; ++i)
@@ -266,9 +281,8 @@ void chase(int colors[4])
             uint8_t scaledR = colors[0] * scale;
             uint8_t scaledG = colors[1] * scale;
             uint8_t scaledB = colors[2] * scale;
-            uint8_t scaledW = colors[3] * scale;
 
-            pixels.setPixelColor(tailIndex, pixels.Color(scaledR, scaledG, scaledB, scaledW));
+            pixels.setPixelColor(tailIndex, pixels.Color(scaledR, scaledG, scaledB));
         }
 
         // Update position and timing
@@ -281,7 +295,7 @@ long clockLastMoveMs = -1;
 long clockPulseStep = 0;
 float clockPulseSteps = CLOCK_PULSE_MS / CLOCK_DELAY_MS;
 
-void clock(int colors[4], long elapsedMs, float totalMins)
+void clock(int colors[3], long elapsedMs, float totalMins)
 {
     long clockMs = millis();
     float timePerPixelMs = (1.0f * totalMins / NUM_PIXELS) * 60000.0;
@@ -298,9 +312,8 @@ void clock(int colors[4], long elapsedMs, float totalMins)
             float scaledR = colors[0] * scale;
             float scaledG = colors[1] * scale;
             float scaledB = colors[2] * scale;
-            float scaledW = colors[3] * scale;
 
-            pixels.setPixelColor(i, pixels.Color(scaledR, scaledG, scaledB, scaledW));
+            pixels.setPixelColor(i, pixels.Color(scaledR, scaledG, scaledB));
         }
 
         // Pulse the lead pixel
@@ -308,9 +321,8 @@ void clock(int colors[4], long elapsedMs, float totalMins)
         float pulsedR = colors[0] * pulseScale;
         float pulsedG = colors[1] * pulseScale;
         float pulsedB = colors[2] * pulseScale;
-        float pulsedW = colors[3] * pulseScale;
 
-        pixels.setPixelColor(lastPixelIndex - 1, pixels.Color(pulsedR, pulsedG, pulsedB, pulsedW));
+        pixels.setPixelColor(lastPixelIndex - 1, pixels.Color(pulsedR, pulsedG, pulsedB));
 
         // Prepare next step
         clockPulseStep = clockPulseStep + CLOCK_DELAY_MS > CLOCK_PULSE_MS ? 0 : clockPulseStep + CLOCK_DELAY_MS;
@@ -322,7 +334,7 @@ long breathLastMoveMs = -1;
 long breathPulseStep = 0;
 float breathPulseSteps = CLOCK_PULSE_MS / CLOCK_DELAY_MS;
 
-void breath(int colors[4])
+void breath(int colors[3])
 {
     long clockMs = currentMs;
 
@@ -333,11 +345,10 @@ void breath(int colors[4])
         float pulsedR = colors[0] * pulseScale;
         float pulsedG = colors[1] * pulseScale;
         float pulsedB = colors[2] * pulseScale;
-        float pulsedW = colors[3] * pulseScale;
 
         for (int i = 0; i < NUM_PIXELS; ++i)
         {
-            pixels.setPixelColor(i, pixels.Color(pulsedR, pulsedG, pulsedB, pulsedW));
+            pixels.setPixelColor(i, pixels.Color(pulsedR, pulsedG, pulsedB));
         }
 
         // Prepare next step

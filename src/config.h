@@ -1,3 +1,7 @@
+// Onboard Dotstar configuration
+#define DOTSTAR_DATA_PIN 8
+#define DOTSTAR_CLOCK_PIN 6
+
 // Neopixel configuratoin
 #define NEOPIXEL_PIN 9
 #define NUM_PIXELS 24
